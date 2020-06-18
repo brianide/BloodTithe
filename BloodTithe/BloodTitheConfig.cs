@@ -19,6 +19,14 @@ namespace BloodTithe
 		[DefaultValue(3)]
 		public int ItemsRequired { get; private set; }
 
+		[JsonProperty(DefaultValueHandling = DefaultValueHandling.Populate)]
+		[DefaultValue(false)]
+		public bool PreventCorruption { get; private set; }
+
+		[JsonProperty(DefaultValueHandling = DefaultValueHandling.Populate)]
+		[DefaultValue(true)]
+		public bool SpawnWarpFairy { get; private set; }
+
 		public static BloodTitheConfig Load()
 		{
 			TShock.Log.Info("Loading configuration from {0}", FilePath);

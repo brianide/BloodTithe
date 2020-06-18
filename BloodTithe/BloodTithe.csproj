@@ -55,6 +55,7 @@
   <ItemGroup>
     <Compile Include="BloodTitheConfig.cs" />
     <Compile Include="BloodTithePlugin.cs" />
+    <Compile Include="NPCAttachmentData.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="Util.cs" />
   </ItemGroup>
