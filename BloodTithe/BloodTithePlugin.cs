@@ -22,6 +22,7 @@ namespace BloodTithe
 		private BloodTitheConfig Config;
 
 		private readonly ConditionalWeakTable<NPC, object> NPCAttachments = new ConditionalWeakTable<NPC, object>();
+		private readonly IDictionary<(int x, int y), int> PendingAltars = new Dictionary<(int, int), int>();
 
 		public BloodTithePlugin(Main game) : base(game) { }
 
@@ -32,35 +33,64 @@ namespace BloodTithe
 			RegisterCorruptionTracking();
 			RegisterAIHandling();
 
+			// Add debug commands
 			Util.RegisterChatCommands("bloodtithe.debug",
 				("bt_printconfig", args => args.Player.SendInfoMessage(Config.ToString())),
+				("bt_pending", args => PendingAltars.ForEach(kv => args.Player.SendInfoMessage("{0},{1}: {2}", kv.Key.x, kv.Key.y, kv.Value))),
 				("bt_needammo", args => Item.NewItem(args.Player.TPlayer.Top, Vector2.Zero, Config.Item, Stack: 30, noGrabDelay: true)));
 		}
 
 		private void RegisterCorruptionTracking()
 		{
-			(TSPlayer who, Vector2 where)? lastAltarBash = null;
+			Vector2? altarPopLocation = null;
 
-			// Watch SendTileSquare packets for altars being broken
-			TShockAPI.GetDataHandlers.TileEdit += delegate (object sender, TileEditEventArgs args)
+			// Track Life Crystals on altars
+			OTAPI.Hooks.Item.PreUpdate += delegate (Item item, ref int id)
 			{
-				if (args.Action == EditAction.KillTile && Main.tile[args.X, args.Y].type == TileID.DemonAltar && args.EditData == 0)
+				// Don't pop altars pre-HM
+				if (!Main.hardMode)
+					return OTAPI.HookResult.Continue;
+
+				// Only care if it's a Life Crystal (or whatever)
+				if (item.type != Config.Item)
+					return OTAPI.HookResult.Continue;
+
+				// Only care if it's on top of a Demon Altar
+				var tileCoord = item.Center.ToTileCoordinates();
+				if (Main.tile.TileAt(tileCoord).type != TileID.DemonAltar)
+					return OTAPI.HookResult.Continue;
+
+				// Find out how many times this altar has already been hit with Life Crystals
+				var (bounds, origin) = Util.GetAltarBoundsFromTile(tileCoord.X, tileCoord.Y);
+				var altarHealth = PendingAltars.GetValue((origin.X, origin.Y), Config.ItemsRequired);
+
+				// Hit it with the current stack
+				altarHealth = Util.ConsumeFromStack(altarHealth, item, id, goPoof: true, bounceLeftovers: true);
+
+				// Record the new health value if the altar is still "alive"
+				if (altarHealth > 0)
 				{
-					TShock.Log.Debug("Altar smashed by {0}", args.Player.Name);
-					var (altarBounds, _) = Util.GetAltarBoundsFromTile(args.X, args.Y, fluff: 1);
-					var heartsOnAltar = Util.GetItemsOfType(Config.Item).Where(t => t.item.Hitbox.Intersects(altarBounds));
-					if (Util.ConsumeItems(Config.ItemsRequired, heartsOnAltar, bounceLeftovers: true))
-					{
-						TShock.Log.Debug("Successfully consumed items from {0} stack(s)", heartsOnAltar);
-						lastAltarBash = (args.Player, altarBounds.Center.ToVector2());
-					}
+					PendingAltars[(origin.X, origin.Y)] = altarHealth;
+					return OTAPI.HookResult.Continue;
 				}
+
+				// Record the altar destruction
+				altarPopLocation = bounds.Center.ToVector2();
+				PendingAltars.Remove((origin.X, origin.Y));
+
+				// Manually fire the normal altar-nuking results
+				TSPlayer.All.SendData(PacketTypes.Tile, null, 0, tileCoord.X, tileCoord.Y);
+				Util.DoFairyFX(altarPopLocation.Value, 0);
+				WorldGen.KillTile(origin.X, origin.Y, false);
+
+				return OTAPI.HookResult.Continue;
 			};
 
+			// Catch tile corruption events
 			ServerApi.Hooks.NetSendData.Register(this, args =>
 			{
-				// Bail if we haven't tracked an altar-bash event
-				if (!lastAltarBash.HasValue)
+				// Bail if we're not tracking an altar being popped
+				if (!altarPopLocation.HasValue)
 					return;
 
 				if (args.MsgId == PacketTypes.TileSendSquare)
@@ -85,29 +115,28 @@ namespace BloodTithe
 						// Spawn fairy to warp to the tile
 						if (Config.SpawnWarpFairy)
 						{
-							var loc = Util.FindProbablySafeTeleportLocation(lastAltarBash.Value.who, tilePos);
-							SpawnWarpFairy(lastAltarBash.Value.where, loc, tilePos);
-						}
-						else
-						{
-							// Play standard FX letting them know it worked
-							Util.DoFairyFX(lastAltarBash.Value.where, 2);
+							var loc = Util.FindProbablySafeTeleportLocation(tilePos);
+							SpawnWarpFairy(altarPopLocation.Value, loc, tilePos);
 						}
 
 						// Stop watching, since we've caught our corruption event
-						lastAltarBash = null;
+						altarPopLocation = null;
 					}
 				}
 				// If no corruption event occurs, the next outgoing packet we see should be the wraith(s) spawning
 				else if (args.MsgId == PacketTypes.NpcUpdate)
 				{
-					// Play standard FX letting them know it worked
-					Util.DoFairyFX(lastAltarBash.Value.where, 2);
-
 					TShock.Log.Info("No corruption event was observed");
-					lastAltarBash = null;
+					altarPopLocation = null;
 				}
 			});
+
+			// Cleanup altar health tracking if it gets broken the old fashioned way
+			TShockAPI.GetDataHandlers.TileEdit += delegate (object sender, TileEditEventArgs args)
+			{
+				if (args.Action == EditAction.KillTile && Main.tile[args.X, args.Y].type == TileID.DemonAltar && args.EditData == 0)
+					Util.GetAltarBoundsFromTile(args.X, args.Y).tileOrigin.Let(p => PendingAltars.Remove((p.X, p.Y)));
+			};
 		}
 
 		private void SpawnWarpFairy(Vector2 pos, Vector2 dest, Point corruptedTile)
@@ -128,8 +157,10 @@ namespace BloodTithe
 			ferryFairy.life = 124950;
 			ferryFairy.lifeMax = 124950;
 
+			// Load the destination section
+			Main.player.Where(p => p.active).ForEach(p => RemoteClient.CheckSection(p.whoAmI, dest));
+
 			// Attach special handling data
-			RemoteClient.CheckSection(ferryFairy.target, dest);
 			NPCAttachments.Add(ferryFairy, new FairyExtendedIdle()
 			{
 				HomePoint = pos,
@@ -145,7 +176,7 @@ namespace BloodTithe
 
 					// The guide fairy doesn't actually need any special logic; we just have to set its "treasure"
 					// coordinates ai[0] and ai[1] manually and initialize its state ai[2] to 3
-					var guideFairy = Main.npc[NPC.NewNPC((int)dest.X, (int)dest.Y - 40, NPCID.FairyCritterPink, ai0: corruptedTile.X, ai1: corruptedTile.Y, ai2: 3)];
+					var guideFairy = Main.npc[NPC.NewNPC((int)dest.X, (int)dest.Y - 20, NPCID.FairyCritterPink, ai0: corruptedTile.X, ai1: corruptedTile.Y, ai2: 3)];
 
 					// Safeguarding against the player again
 					guideFairy.life = 124950;

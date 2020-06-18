@@ -30,6 +30,8 @@ namespace BloodTithe
 		public static bool IsInfectious(this ITile thing) => TileID.Sets.Corrupt[thing.type] || TileID.Sets.Crimson[thing.type] || TileID.Sets.Hallow[thing.type];
 		public static bool IsStone(this ITile thing) => TileID.Sets.Conversion.Stone[thing.type];
 
+		public static ITile TileAt(this ITileCollection thing, Point tileCoord) => thing[tileCoord.X, tileCoord.Y];
+
 		public static bool NextBoolean(this UnifiedRandom thing) => thing.Next(2) == 0;
 		public static int NextDirection(this UnifiedRandom thing) => thing.NextBoolean() ? 1 : -1;
 
@@ -52,43 +54,58 @@ namespace BloodTithe
 			return (new Rectangle(pos.X, pos.Y, dims.X, dims.Y), tileOrigin);
 		}
 
-		public static bool ConsumeItems(int count, IEnumerable<(Item item, int index)> items, bool bounceLeftovers = false)
+		public static int ConsumeFromStack(int remaining, Item item, int index, bool goPoof = false, bool bounceLeftovers = false)
 		{
-			// Determine if we have enough
-			if (items.Select(t => t.item.stack).Sum() < count)
-				return false;
+			// Determine how many are coming off of this stack
+			int taking = Math.Min(item.stack, remaining);
 
+			// Update the stack
+			item.stack -= taking;
+			if (item.stack <= 0)
+			{
+				item.SetDefaults();
+				item.active = false;
+
+				if (goPoof)
+					TSPlayer.All.SendData(PacketTypes.PoofOfSmoke, number: (int)item.Center.X, number2: (int)item.Center.Y);
+			}
+			else if (bounceLeftovers)
+			{
+				item.velocity.Y += Main.rand.Next(-25, -12) * 0.1f;
+			}
+
+			TSPlayer.All.SendData(PacketTypes.UpdateItemDrop, number: index);
+
+			return remaining - taking;
+		}
+
+		public static int ConsumeAvailableItems(int remaining, IEnumerable<(Item item, int index)> items, bool goPoof = false, bool bounceLeftovers = false)
+		{
 			// Consume as many as we need
-			int remaining = count;
 			foreach (var (item, index) in items)
 			{
-				// Determine how many are coming off of this stack
-				int taking = Math.Min(item.stack, remaining);
-
-				// Update the stack
-				item.stack -= taking;
-				if (item.stack <= 0)
-				{
-					item.SetDefaults();
-					item.active = false;
-				}
-				else if (bounceLeftovers)
-				{
-					item.velocity.Y += Main.rand.Next(-25, -12) * 0.1f;
-				}
-
-				TSPlayer.All.SendData(PacketTypes.UpdateItemDrop, number: index);
+				remaining = ConsumeFromStack(remaining, item, index, goPoof, bounceLeftovers);
 
 				// See if we're done
-				remaining -= taking;
 				if (remaining <= 0)
 					break;
 			}
 
+			return remaining;
+		}
+
+		public static bool ConsumeItems(int count, IEnumerable<(Item item, int index)> items, bool goPoof = false, bool bounceLeftovers = false)
+		{
+			// Bail if we don't have enough to cover the whole amount
+			if (items.Select(t => t.item.stack).Sum() < count)
+				return false;
+
+			// Consume the items
+			ConsumeAvailableItems(count, items, goPoof, bounceLeftovers);
 			return true;
 		}
 
-		public static Vector2 FindProbablySafeTeleportLocation(TSPlayer player, Point target)
+		public static Vector2 FindProbablySafeTeleportLocation(Point target)
 		{
 			// Look for a spot to teleport to
 			var settings = new Player.RandomTeleportationAttemptSettings()
@@ -102,22 +119,32 @@ namespace BloodTithe
 				mostlySolidFloor = true
 			};
 
+			var destPos = Vector2.Zero;
 			bool canSpawn = false;
 			int rangeX = 100;
 			int halfRangeX = rangeX / 2;
 			int rangeY = 80;
 
-			var destPos = player.TPlayer.CheckForGoodTeleportationSpot(ref canSpawn, target.X - halfRangeX, rangeX, target.Y, rangeY, settings);
-			if (!canSpawn)
-				destPos = player.TPlayer.CheckForGoodTeleportationSpot(ref canSpawn, target.X - rangeX, halfRangeX, target.Y, rangeY, settings);
-			if (!canSpawn)
-				destPos = player.TPlayer.CheckForGoodTeleportationSpot(ref canSpawn, target.X + halfRangeX, halfRangeX, target.Y, rangeY, settings);
+			// TODO I'm not sure why CheckForGoodTeleportationSpot is an instance method, since it seems like the dimensions of a
+			// Player object are always the same. Worth double-checking later, but in the meantime we'll just take a random player
+			// and call it a day.
+			Main.player.Where(p => p.active).FirstOrDefault()?.Let(player =>
+			{
+				destPos = player.CheckForGoodTeleportationSpot(ref canSpawn, target.X - halfRangeX, rangeX, target.Y, rangeY, settings);
+				if (!canSpawn)
+					destPos = player.CheckForGoodTeleportationSpot(ref canSpawn, target.X - rangeX, halfRangeX, target.Y, rangeY, settings);
+				if (!canSpawn)
+					destPos = player.CheckForGoodTeleportationSpot(ref canSpawn, target.X + halfRangeX, halfRangeX, target.Y, rangeY, settings);
+			});
 
-			// All 3000 attempts failed, so fuck it; drop 'em wherever
-			if (!canSpawn)
-				destPos = new Vector2(target.X + Main.rand.NextFloatDirection() * rangeX, target.Y + Main.rand.NextFloatDirection() * rangeY);
 
-			return destPos;
+			if (canSpawn)
+				return destPos;
+			else
+			{
+				TShock.Log.Warn("Fell back to a random teleportation location; this shouldn't happen except very rarely");
+				return new Vector2(target.X + Main.rand.NextFloatDirection() * rangeX, target.Y + Main.rand.NextFloatDirection() * rangeY);
+			}
 		}
 
 		public static void DoFairyFX(Vector2 pos, int color = -1) => TSPlayer.All.SendData(PacketTypes.TreeGrowFX, null, 2, pos.X, pos.Y, color >= 0 ? color : Main.rand.Next(3));
