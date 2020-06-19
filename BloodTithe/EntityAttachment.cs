@@ -7,17 +7,17 @@ using TShockAPI;
 namespace BloodTithe
 {
 	abstract class EntityAttachment
-    {
+	{
 		private int timer;
-        public bool Update() => OnUpdate(timer++);
+		public bool Update() => OnUpdate(timer++);
 		protected abstract bool OnUpdate(int tick);
 	}
 
-    class FairyExtendedIdle : EntityAttachment
-    {
+	class FairyExtendedIdle : EntityAttachment
+	{
 		protected NPC Fairy { get; }
 		public Vector2 HomePoint { get; }
-        public Action<TSPlayer> OnCollision { get; }
+		public Action<TSPlayer> OnCollision { get; }
 
 		public FairyExtendedIdle(NPC entity, Vector2 homePoint, Action<TSPlayer> onCollision)
 		{
@@ -27,7 +27,7 @@ namespace BloodTithe
 		}
 
 		protected override bool OnUpdate(int tick)
-        {
+		{
 			// Detach special handling if the fairy's five-minute timer is up
 			if (Fairy.ai[2] == 7)
 				return false;
@@ -61,5 +61,5 @@ namespace BloodTithe
 
 			return true;
 		}
-    }
+	}
 }

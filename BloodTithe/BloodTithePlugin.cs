@@ -28,14 +28,14 @@ namespace BloodTithe
 
 		public override void Initialize()
 		{
-			Config = BloodTitheConfig.Load();
+			Config = PluginConfiguration.Load<BloodTitheConfig>();
 
 			RegisterCorruptionTracking();
 			RegisterAIHandling();
 
 			// Add debug commands
 			Util.RegisterChatCommands("bloodtithe.debug",
-				("bt_printconfig", args => args.Player.SendInfoMessage(Config.ToString())),
+				("bt_printconfig", args => args.Player.SendInfoMessage(PluginConfiguration.Stringify(Config))),
 				("bt_pending", args => PendingAltars.ForEach(kv => args.Player.SendInfoMessage("{0},{1}: {2}", kv.Key.x, kv.Key.y, kv.Value))),
 				("bt_needammo", args => Item.NewItem(args.Player.TPlayer.Top, Vector2.Zero, Config.Item, Stack: 30, noGrabDelay: true)));
 		}
