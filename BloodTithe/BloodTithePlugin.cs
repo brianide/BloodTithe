@@ -21,7 +21,7 @@ namespace BloodTithe
 
 		private BloodTitheConfig Config;
 
-		private readonly ConditionalWeakTable<NPC, object> NPCAttachments = new ConditionalWeakTable<NPC, object>();
+		private readonly ConditionalWeakTable<object, EntityAttachment> NPCAttachments = new ConditionalWeakTable<object, EntityAttachment>();
 		private readonly IDictionary<(int x, int y), int> PendingAltars = new Dictionary<(int, int), int>();
 
 		public BloodTithePlugin(Main game) : base(game) { }
@@ -161,79 +161,39 @@ namespace BloodTithe
 			Main.player.Where(p => p.active).ForEach(p => RemoteClient.CheckSection(p.whoAmI, dest));
 
 			// Attach special handling data
-			NPCAttachments.Add(ferryFairy, new FairyExtendedIdle()
+			NPCAttachments.Add(ferryFairy, new FairyExtendedIdle(ferryFairy, pos, player =>
 			{
-				HomePoint = pos,
-				Timer = 0,
-				OnCollision = player =>
-				{
-					// Pop the idler fairy and teleport the player
-					Util.DoFairyFX(pos, 0);
-					ferryFairy.active = false;
+				// Pop the idler fairy and teleport the player
+				Util.DoFairyFX(pos, 0);
+				ferryFairy.active = false;
 
-					player.Teleport(dest.X, dest.Y, TeleportationStyleID.MagicConch);
-					Util.DoFairyFX(dest, 0);
+				player.Teleport(dest.X, dest.Y, TeleportationStyleID.MagicConch);
+				Util.DoFairyFX(dest, 0);
 
-					// The guide fairy doesn't actually need any special logic; we just have to set its "treasure"
-					// coordinates ai[0] and ai[1] manually and initialize its state ai[2] to 3
-					var guideFairy = Main.npc[NPC.NewNPC((int)dest.X, (int)dest.Y - 20, NPCID.FairyCritterPink, ai0: corruptedTile.X, ai1: corruptedTile.Y, ai2: 3)];
+				// The guide fairy doesn't actually need any special logic; we just have to set its "treasure"
+				// coordinates ai[0] and ai[1] manually and initialize its state ai[2] to 3
+				var guideFairy = Main.npc[NPC.NewNPC((int)dest.X, (int)dest.Y - 20, NPCID.FairyCritterPink, ai0: corruptedTile.X, ai1: corruptedTile.Y, ai2: 3)];
 
-					// Safeguarding against the player again
-					guideFairy.life = 124950;
-					guideFairy.lifeMax = 124950;
+				// Safeguarding against the player again
+				guideFairy.life = 124950;
+				guideFairy.lifeMax = 124950;
 
-					// Make sure we don't despawn before the player shows up
-					guideFairy.timeLeft *= 100;
-				}
-			});
+				// Make sure we don't despawn before the player shows up
+				guideFairy.timeLeft *= 100;
+			}));
 		}
 
 		private void RegisterAIHandling()
 		{
 			ServerApi.Hooks.NpcAIUpdate.Register(this, args =>
 			{
-				var npc = args.Npc;
-
-				NPCAttachments.GetValue(args.Npc)?.Let(data =>
+				// Try and find an attachment for the current NPC;
+				// if it has one, run its Update method
+				NPCAttachments.GetValue(args.Npc)?.Update().Let(keep =>
 				{
-					if (data is FairyExtendedIdle extra)
-					{
-						// Detach special handling if the fairy's five-minute timer is up
-						if (npc.ai[2] == 7)
-						{
-							NPCAttachments.Remove(npc);
-							return;
-						}
-
-						// Prevent despawning
-						if (npc.ai[3] == 200)
-							npc.ai[3] = 16;
-
-						// Move toward the home point periodically (or when the player manages to hit us) so that
-						// we don't get too far out of position
-						if (extra.Timer % 360 == 0 || npc.life < npc.lifeMax)
-						{
-							npc.ai[3] = -15;
-							npc.velocity = (extra.HomePoint - npc.Center) * 0.1f;
-							npc.life = npc.lifeMax;
-							npc.netUpdate = true;
-						}
-
-						// On collision, run the handler and then detach the special handling
-						if (extra.OnCollision is object && extra.Timer % 6 == 0)
-						{
-							var colliding = TShock.Players.Where(p => p is object && p.ConnectionAlive && p.TPlayer.Hitbox.Contains(extra.HomePoint.ToPoint()));
-
-							if (colliding.Any())
-							{
-								colliding.ForEach(extra.OnCollision);
-								NPCAttachments.Remove(npc);
-							}
-
-						}
-
-						extra.Timer++;
-					}
+					// If the Update method returned false, detach from the NPC
+					if (!keep)
+						NPCAttachments.Remove(args.Npc);
 				});
 			});
 		}

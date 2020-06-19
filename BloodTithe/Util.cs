@@ -1,15 +1,13 @@
 ﻿using Microsoft.Xna.Framework;
+using OTAPI.Tile;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using OTAPI.Tile;
-using System.Text;
-using System.Threading.Tasks;
-using Terraria.ID;
-using TShockAPI;
-using Terraria;
-using Terraria.Utilities;
 using System.Runtime.CompilerServices;
+using Terraria;
+using Terraria.ID;
+using Terraria.Utilities;
+using TShockAPI;
 
 namespace BloodTithe
 {
