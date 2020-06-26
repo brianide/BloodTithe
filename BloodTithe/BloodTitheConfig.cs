@@ -1,4 +1,5 @@
-﻿using System.ComponentModel;
+﻿using CommonGround.Configuration;
+using System.ComponentModel;
 using System.IO;
 using Terraria.ID;
 using TShockAPI;

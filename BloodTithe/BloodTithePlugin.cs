@@ -1,4 +1,8 @@
-﻿using Microsoft.Xna.Framework;
+﻿using CommonGround.Configuration;
+using CommonGround.Extensions.Lang;
+using CommonGround.Extensions.Terraria;
+using CommonGround.Utilities;
+using Microsoft.Xna.Framework;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -34,10 +38,13 @@ namespace BloodTithe
 			RegisterAIHandling();
 
 			// Add debug commands
-			Util.RegisterChatCommands("bloodtithe.debug",
-				("bt_printconfig", args => args.Player.SendInfoMessage(PluginConfiguration.Stringify(Config))),
-				("bt_pending", args => PendingAltars.ForEach(kv => args.Player.SendInfoMessage("{0},{1}: {2}", kv.Key.x, kv.Key.y, kv.Value))),
-				("bt_needammo", args => Item.NewItem(args.Player.TPlayer.Top, Vector2.Zero, Config.Item, Stack: 30, noGrabDelay: true)));
+			Commands.ChatCommands.AddGroup("bloodtithe.debug",
+				("bt_printconfig", args =>
+					args.Player.SendInfoMessage(PluginConfiguration.Stringify(Config))),
+				("bt_pending", args =>
+					PendingAltars.ForEach(kv => args.Player.SendInfoMessage("{0},{1}: {2}", kv.Key.x, kv.Key.y, kv.Value))),
+				("bt_needammo", args =>
+					Item.NewItem(args.Player.TPlayer.Top, Vector2.Zero, Config.Item, Stack: 30, noGrabDelay: true)));
 		}
 
 		private void RegisterCorruptionTracking()
@@ -57,15 +64,15 @@ namespace BloodTithe
 
 				// Only care if it's on top of a Demon Altar
 				var tileCoord = item.Center.ToTileCoordinates();
-				if (Main.tile.TileAt(tileCoord).type != TileID.DemonAltar)
+				if (Framing.GetTileSafely(tileCoord).type != TileID.DemonAltar)
 					return OTAPI.HookResult.Continue;
 
 				// Find out how many times this altar has already been hit with Life Crystals
-				var (bounds, origin) = Util.GetAltarBoundsFromTile(tileCoord.X, tileCoord.Y);
+				var (bounds, origin) = GetAltarBoundsFromTile(tileCoord.X, tileCoord.Y);
 				var altarHealth = PendingAltars.GetValue((origin.X, origin.Y), Config.ItemsRequired);
 
 				// Hit it with the current stack
-				altarHealth = Util.ConsumeFromStack(altarHealth, item, id, goPoof: true, bounceLeftovers: true);
+				altarHealth = GroundUtils.ConsumeItemsFromStack(altarHealth, id, goPoof: true, bounceLeftovers: true);
 
 				// Record the new health value if the altar is still "alive"
 				if (altarHealth > 0)
@@ -80,7 +87,7 @@ namespace BloodTithe
 
 				// Manually fire the normal altar-nuking results
 				TSPlayer.All.SendData(PacketTypes.Tile, null, 0, tileCoord.X, tileCoord.Y);
-				Util.DoFairyFX(altarPopLocation.Value, 0);
+				GroundUtils.DoFairyFX(altarPopLocation.Value, 0);
 				WorldGen.KillTile(origin.X, origin.Y, false);
 
 				return OTAPI.HookResult.Continue;
@@ -115,7 +122,7 @@ namespace BloodTithe
 						// Spawn fairy to warp to the tile
 						if (Config.SpawnWarpFairy)
 						{
-							var loc = Util.FindProbablySafeTeleportLocation(tilePos);
+							var loc = GroundUtils.FindProbablySafeTeleportLocation(tilePos);
 							SpawnWarpFairy(altarPopLocation.Value, loc, tilePos);
 						}
 
@@ -135,7 +142,7 @@ namespace BloodTithe
 			TShockAPI.GetDataHandlers.TileEdit += delegate (object sender, TileEditEventArgs args)
 			{
 				if (args.Action == EditAction.KillTile && Main.tile[args.X, args.Y].type == TileID.DemonAltar && args.EditData == 0)
-					Util.GetAltarBoundsFromTile(args.X, args.Y).tileOrigin.Let(p => PendingAltars.Remove((p.X, p.Y)));
+					GetAltarBoundsFromTile(args.X, args.Y).tileOrigin.Let(p => PendingAltars.Remove((p.X, p.Y)));
 			};
 		}
 
@@ -144,7 +151,7 @@ namespace BloodTithe
 			// Spawn the idler fairy to teleport us
 			var ferryFairy = Main.npc[NPC.NewNPC((int)pos.X, (int)pos.Y, NPCID.FairyCritterPink, ai2: 5)];
 			ferryFairy.TargetClosest();
-			Util.DoFairyFX(pos, 0);
+			GroundUtils.DoFairyFX(pos, 0);
 
 			// Funny story; damage immunity doesn't kick in for a fairy until its first AI update, so it's
 			// quite possible for an errant hammerswing to splatter it before it's had the chance to finish
@@ -164,11 +171,11 @@ namespace BloodTithe
 			NPCAttachments.Add(ferryFairy, new FairyExtendedIdle(ferryFairy, pos, player =>
 			{
 				// Pop the idler fairy and teleport the player
-				Util.DoFairyFX(pos, 0);
+				GroundUtils.DoFairyFX(pos, 0);
 				ferryFairy.active = false;
 
 				player.Teleport(dest.X, dest.Y, TeleportationStyleID.MagicConch);
-				Util.DoFairyFX(dest, 0);
+				GroundUtils.DoFairyFX(dest, 0);
 
 				// The guide fairy doesn't actually need any special logic; we just have to set its "treasure"
 				// coordinates ai[0] and ai[1] manually and initialize its state ai[2] to 3
@@ -196,6 +203,14 @@ namespace BloodTithe
 						NPCAttachments.Remove(args.Npc);
 				});
 			});
+		}
+
+		public static (Rectangle bounds, Point tileOrigin) GetAltarBoundsFromTile(int x, int y, float fluff = 0)
+		{
+			var tileOrigin = Main.tile[x, y].Let(tile => new Point(x - tile.frameX / 18 % 3, y - tile.frameY / 18));
+			var pos = (new Vector2(tileOrigin.X - fluff, tileOrigin.Y - fluff) * 16).ToPoint();
+			var dims = (new Vector2(3 + fluff * 2, 2 + fluff * 2) * 16).ToPoint();
+			return (new Rectangle(pos.X, pos.Y, dims.X, dims.Y), tileOrigin);
 		}
 
 	}
